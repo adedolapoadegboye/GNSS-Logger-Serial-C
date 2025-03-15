@@ -6,10 +6,44 @@
 #include <string.h>
 #include <time.h>
 #include <dirent.h>
+#include <pthread.h>
 
-#define MAX_PORT_LENGTH 256
+#define MAX_PORT_LENGTH 512
 #define MAX_PORTS 20
 #define MAX_TEST_DURATION 86400
+#define COMMAND_LOG "logs/pqtm_log.txt"
+
+// Function to send PQTM commands and log responses
+void handle_pqtm_commands(int fd)
+{
+    FILE *cmd_log = fopen(COMMAND_LOG, "w");
+    if (!cmd_log)
+    {
+        perror("Error opening PQTM log file");
+        return;
+    }
+
+    char *commands[] = {"$PQTMVERNO*58\r\n"};
+    size_t num_commands = sizeof(commands) / sizeof(commands[0]);
+    char buffer[64];
+
+    for (size_t i = 0; i < num_commands; i++)
+    {
+        write(fd, commands[i], strlen(commands[i]));
+        usleep(500000); // Delay to allow response
+
+        int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+        if (bytes_read > 0)
+        {
+            buffer[bytes_read] = '\0';
+            if (strstr(buffer, "$PQTM")) // Look for PQTM response
+            {
+                fprintf(cmd_log, "Response to %s: %s\n", commands[i], buffer);
+            }
+        }
+    }
+    fclose(cmd_log);
+}
 
 // Function to scan available serial ports dynamically
 int get_available_ports(char ports[MAX_PORTS][MAX_PORT_LENGTH])
@@ -169,6 +203,11 @@ int main()
         return 1;
     }
 
+    // Start PQTM command handling in a separate thread
+    pthread_t pqtm_thread;
+    pthread_create(&pqtm_thread, NULL, handle_pqtm_commands, NULL);
+    handle_pqtm_commands(serial_fd);
+
     // Generate log filename
     char log_filename[512];
     get_log_filename(log_filename, sizeof(log_filename));
@@ -178,5 +217,6 @@ int main()
 
     // Close serial port
     close(serial_fd);
+
     return 0;
 }
