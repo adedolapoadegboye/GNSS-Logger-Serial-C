@@ -19,7 +19,7 @@ void handle_pqtm_commands(int fd)
     FILE *cmd_log = fopen(COMMAND_LOG, "w");
     if (!cmd_log)
     {
-        perror("Error opening PQTM log file");
+        perror("Error opening PQTM log file \n");
         return;
     }
 
@@ -29,8 +29,13 @@ void handle_pqtm_commands(int fd)
 
     for (size_t i = 0; i < num_commands; i++)
     {
-        write(fd, commands[i], strlen(commands[i]));
-        usleep(500000); // Delay to allow response
+        int command_writer = write(fd, commands[i], strlen(commands[i]));
+        if (command_writer == -1 || command_writer != strlen(commands[i]))
+        {
+            perror("Error writing command to serial port \n");
+            return;
+        }
+        usleep(50000); // 50 ms delay to allow response
 
         int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
         if (bytes_read > 0)
@@ -40,6 +45,10 @@ void handle_pqtm_commands(int fd)
             {
                 fprintf(cmd_log, "Response to %s: %s\n", commands[i], buffer);
             }
+        }
+        else
+        {
+            fprintf(cmd_log, "No or invalid response to %s\n", commands[i]);
         }
     }
     fclose(cmd_log);
@@ -203,14 +212,25 @@ int main()
         return 1;
     }
 
-    // Start PQTM command handling in a separate thread
-    pthread_t pqtm_thread;
-    pthread_create(&pqtm_thread, NULL, handle_pqtm_commands, NULL);
-    handle_pqtm_commands(serial_fd);
-
     // Generate log filename
     char log_filename[512];
     get_log_filename(log_filename, sizeof(log_filename));
+
+    // Start PQTM command handling in a separate thread
+    pthread_t pqtm_thread;
+    int command_thread = pthread_create(&pqtm_thread, NULL, handle_pqtm_commands, (void *)serial_fd);
+
+    if (command_thread != 0)
+    {
+        perror("Error creating PQTM thread");
+        return 1;
+    }
+
+    if (pthread_join(pqtm_thread, NULL) != 0)
+    {
+        perror("Error ending PQTM command thread");
+        return 1;
+    }
 
     // Start logging GNSS data
     log_gnss_data(serial_fd, log_filename, test_duration);
